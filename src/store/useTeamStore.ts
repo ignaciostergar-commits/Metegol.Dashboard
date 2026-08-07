@@ -59,10 +59,16 @@ export const useTeamStore = create<TeamStore>((_set, get) => ({
       };
     });
 
+    const cajaChicaTotal = mergedPlayers.reduce(
+      (sum, player) => sum + (player.caja_chica_paid || 0),
+      0
+    );
+
     const updated: TeamData = {
       ...team,
       players: mergedPlayers,
       team_has_goalkeeper: teamHasGoalkeeper ?? team.team_has_goalkeeper,
+      caja_chica_total: cajaChicaTotal,
     };
     await setDoc(TEAM_DOC, updated, { merge: true });
   },
