@@ -1,0 +1,60 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firestore para el dashboard de Metegol.
+//
+// Cómo instalarlas: Firebase Console -> Firestore Database -> Reglas ->
+// pegar este archivo entero -> Publicar. (Ver README.md, sección
+// "Configurar Firebase" para el paso a paso completo.)
+//
+// Idea central: el rol se guarda en users/{uid}.role y estas reglas lo
+// leen ahí mismo para decidir quién puede escribir. Esto es lo que hace
+// que ningún jugador pueda editar nada aunque intente llamar a Firestore
+// directamente desde las herramientas del navegador, sin pasar por la UI.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    // Perfiles de usuario (nombre, rol, playerId vinculado).
+    // Cualquier usuario logueado puede leer los perfiles (para mostrar
+    // nombres, por ejemplo), pero solo el admin puede crear/editar/borrar
+    // usuarios. Cada usuario puede leer el suyo aunque no sea admin.
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Datos del equipo: jugadores, estadísticas, caja chica, etc.
+    // Todos los usuarios logueados pueden leer (ven el dashboard en vivo).
+    // Solo el admin puede escribir (subir Excel, editar jugadores, etc.).
+    match /team/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Contrato del equipo: todos lo leen, solo el admin lo edita.
+    match /contract/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Historial de fechas/partidos (si se usa a futuro): mismo esquema.
+    match /matches/{matchId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Por defecto, todo lo demás queda cerrado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

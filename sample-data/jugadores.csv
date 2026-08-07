@@ -1,0 +1,15 @@
+name,position,late_arrivals,undisclosed_absences,red_cards,yellow_cards,matches_played_month,absences_month,is_figura_fecha,has_blooper,goals_month,is_valla_invicta_fecha,is_hat_trick_fecha,caja_chica_paid
+Guido Salse,Arquero / Mediocampista,0,0,0,1,4,0,false,false,0,true,false,5000
+Nacho Stergar,Delantero / Mediocampista,0,1,0,0,3,1,false,true,4,false,false,5000
+Marcos Palma,Defensor,1,0,0,0,4,0,false,false,0,false,false,5000
+Marcos Wade,Mediocampista central,0,0,0,2,4,0,true,false,0,false,false,5000
+Juan Harismendy,Defensor,0,0,0,0,4,0,false,false,0,false,false,5000
+Nacho Laborde,Mediocampista,2,0,1,1,4,0,false,false,0,false,false,5000
+Manuel Nardea,Delantero,0,0,0,0,4,0,false,false,5,false,true,5000
+Tachi Etchegoyen,Delantero,0,0,0,0,3,1,false,false,2,false,false,5000
+Nicolás Gonzales del Cerro,Defensor,0,0,0,3,2,2,false,false,0,false,false,0
+Marcos Robles,Defensor,1,0,0,0,4,0,false,false,0,false,false,5000
+Manuel Estevez,Defensor / Mediocampista,0,0,0,0,4,0,false,false,0,false,false,5000
+Alfonso Suaya,Defensor,0,0,0,0,4,0,false,false,0,false,false,5000
+Ramiro Martin,Mediocampista,0,0,0,0,0,0,false,false,0,false,false,0
+Tomás Devi,,0,0,0,0,0,0,false,false,0,false,false,0
