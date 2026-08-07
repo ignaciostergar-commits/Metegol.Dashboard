@@ -19,14 +19,28 @@ const toneToToastFn: Record<PopupTone, typeof toast.success> = {
  */
 export function ToastManager() {
   const playerId = useAuthStore((s) => s.user?.playerId);
+  const authLoading = useAuthStore((s) => s.loading);
   const getPlayerById = useTeamStore((s) => s.getPlayerById);
   const teamHasGoalkeeper = useTeamStore((s) => s.team.team_has_goalkeeper);
+  const teamLoaded = useTeamStore((s) => s.loaded);
   const hasFired = useRef(false);
 
   useEffect(() => {
     if (hasFired.current) return;
+    // Todavía no llegaron los datos reales (ni el doc de auth ni el doc
+    // del equipo desde Firestore): esperamos al siguiente render en vez
+    // de resolver contra el mock inicial y quedarnos sin disparar nunca.
+    if (authLoading || !teamLoaded) return;
+
     const player = getPlayerById(playerId);
-    if (!player) return;
+    if (!player) {
+      // Ya cargó todo y el jugador sigue sin aparecer: no es un estado
+      // transitorio, es que el usuario no tiene playerId asignado en
+      // Firestore (users/{uid}.playerId) o no matchea ningún id en
+      // team/main.players. No marcamos hasFired para no ocultar el
+      // problema si en algún momento se corrige en caliente.
+      return;
+    }
 
     const popups = getPopupsForPlayer(player, teamHasGoalkeeper);
 
@@ -39,8 +53,7 @@ export function ToastManager() {
     });
 
     hasFired.current = true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamHasGoalkeeper]);
+  }, [authLoading, teamLoaded, playerId, teamHasGoalkeeper, getPlayerById]);
 
   return (
     <Toaster
