@@ -8,10 +8,23 @@ export function ImportButton() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const importPlayers = useTeamStore((s) => s.importPlayers);
+  // Mientras esto sea false, team.players en el store puede seguir siendo
+  // el mock inicial (todavía no llegó el onSnapshot con los datos reales
+  // de Firestore). Importar en ese estado pisa el histórico real con datos
+  // de ejemplo. Bloqueamos el botón hasta que sincronice.
+  const teamLoaded = useTeamStore((s) => s.loaded);
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!teamLoaded) {
+      toast.error(
+        "Todavía se están sincronizando los datos del equipo. Esperá unos segundos y volvé a intentar."
+      );
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
 
     setLoading(true);
     try {
@@ -58,15 +71,18 @@ export function ImportButton() {
       />
       <button
         onClick={() => inputRef.current?.click()}
-        disabled={loading}
+        disabled={loading || !teamLoaded}
+        title={!teamLoaded ? "Sincronizando datos del equipo..." : undefined}
         className="inline-flex items-center gap-2 rounded-lg bg-accent-green px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-base-950 shadow-soft hover:bg-accent-emerald transition-colors disabled:opacity-60"
       >
-        {loading ? (
+        {loading || !teamLoaded ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           <UploadCloud className="h-4 w-4" />
         )}
-        <span className="hidden sm:inline">{loading ? "Importando..." : "Importar Datos"}</span>
+        <span className="hidden sm:inline">
+          {loading ? "Importando..." : !teamLoaded ? "Sincronizando..." : "Importar Datos"}
+        </span>
       </button>
     </>
   );
