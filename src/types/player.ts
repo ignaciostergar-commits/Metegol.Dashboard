@@ -37,6 +37,15 @@ export interface TeamData {
   players: Player[];
 }
 
+// Foto congelada de un mes ya cerrado. Se crea automáticamente justo antes
+// de que un import nuevo pise team/main: en ese momento, lo que hasta ahí
+// era "el mes actual" pasa a ser historia. archived_at es un Timestamp de
+// Firestore (epoch millis en el cliente vía toMillis()) que usamos solo
+// para ordenar de más reciente a más antiguo.
+export interface TeamSnapshot extends TeamData {
+  archived_at_ms: number | null;
+}
+
 export type UserRole = "admin" | "player";
 
 export interface AppUser {

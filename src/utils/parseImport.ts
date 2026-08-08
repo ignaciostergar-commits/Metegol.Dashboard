@@ -1,6 +1,7 @@
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import type { Player, PlayerImportRow } from "@/types/player";
+import { slugify } from "@/utils/slug";
 
 function toNumber(value: unknown, fallback = 0): number {
   if (value === undefined || value === null || value === "") return fallback;
@@ -84,16 +85,6 @@ function normalizeRow(row: Record<string, unknown>): PlayerImportRow {
 // el mismo id entre importaciones (a diferencia de un id basado en el
 // índice de fila), así no se pierde el vínculo con su usuario de login
 // ni el contador histórico de vallas invictas.
-function slugify(name: string): string {
-  return name
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function rowToPlayer(row: PlayerImportRow, index: number): Player {
   const name = (row.name ?? `Jugador ${index + 1}`).toString().trim();
   return {

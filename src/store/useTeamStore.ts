@@ -1,8 +1,16 @@
 import { create } from "zustand";
-import { doc, onSnapshot, runTransaction, setDoc, updateDoc } from "firebase/firestore";
+import {
+  doc,
+  onSnapshot,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Player, TeamData } from "@/types/player";
 import { mockTeamData } from "@/data/mockData";
+import { slugify } from "@/utils/slug";
 
 interface TeamStore {
   team: TeamData;
@@ -37,12 +45,37 @@ function normalizeName(name: string): string {
     .toLowerCase();
 }
 
+// Id determinístico para el documento de historial de un mes: usa la
+// etiqueta del mes (p.ej. "Agosto 2026" -> "agosto-2026") para que quede
+// legible en Firestore, y si no hay etiqueta cargada, cae a AAAA-MM según
+// la fecha del momento en que se archiva.
+function historyIdFor(monthLabel: string): string {
+  const slug = slugify(monthLabel);
+  if (slug) return slug;
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export const useTeamStore = create<TeamStore>((_set, get) => ({
   team: mockTeamData,
   loaded: false,
 
   importPlayers: async (players, teamHasGoalkeeper) => {
     const { team } = get();
+
+    // Antes de pisar el mes actual con los datos nuevos, lo archivamos tal
+    // cual estaba: eso es lo que va a aparecer en "Historial" como un mes
+    // ya cerrado. Si no hay jugadores todavía (primera importación contra
+    // un Firebase recién armado, con el mock inicial), no hay nada real
+    // que archivar y nos lo salteamos.
+    if (team.players.length > 0) {
+      const historyId = historyIdFor(team.month_label);
+      await setDoc(doc(db, "history", historyId), {
+        ...team,
+        archived_at: serverTimestamp(),
+      });
+    }
+
     const previousByName = new Map(team.players.map((p) => [normalizeName(p.name), p]));
 
     // El contador histórico de vallas invictas no se pisa con cada import:
