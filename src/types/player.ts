@@ -34,6 +34,11 @@ export interface TeamData {
   team_has_goalkeeper: boolean;
   caja_chica_total: number;
   month_label: string;
+  // Periodo calendario actual en formato AAAA-MM (p.ej. "2026-08"). Lo
+  // calcula el propio código en cada import a partir de la fecha real; se
+  // usa para detectar sin ambigüedad cuándo arrancó un mes nuevo y así
+  // decidir si hay que archivar el mes anterior antes de pisarlo.
+  month_key: string;
   players: Player[];
 }
 

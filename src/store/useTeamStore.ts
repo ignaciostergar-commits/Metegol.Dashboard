@@ -10,7 +10,6 @@ import {
 import { db } from "@/lib/firebase";
 import type { Player, TeamData } from "@/types/player";
 import { mockTeamData } from "@/data/mockData";
-import { slugify } from "@/utils/slug";
 
 interface TeamStore {
   team: TeamData;
@@ -45,15 +44,16 @@ function normalizeName(name: string): string {
     .toLowerCase();
 }
 
-// Id determinístico para el documento de historial de un mes: usa la
-// etiqueta del mes (p.ej. "Agosto 2026" -> "agosto-2026") para que quede
-// legible en Firestore, y si no hay etiqueta cargada, cae a AAAA-MM según
-// la fecha del momento en que se archiva.
-function historyIdFor(monthLabel: string): string {
-  const slug = slugify(monthLabel);
-  if (slug) return slug;
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+// AAAA-MM de una fecha, para comparar "en qué mes calendario estamos".
+function periodIdFor(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// Etiqueta linda para mostrar ("Agosto 2026"), generada sola a partir de
+// la fecha real: nadie tiene que escribirla ni acordarse de actualizarla.
+function monthLabelFor(date: Date): string {
+  const label = new Intl.DateTimeFormat("es-AR", { month: "long", year: "numeric" }).format(date);
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 export const useTeamStore = create<TeamStore>((_set, get) => ({
@@ -62,15 +62,17 @@ export const useTeamStore = create<TeamStore>((_set, get) => ({
 
   importPlayers: async (players, teamHasGoalkeeper) => {
     const { team } = get();
+    const now = new Date();
+    const nowPeriod = periodIdFor(now);
 
-    // Antes de pisar el mes actual con los datos nuevos, lo archivamos tal
-    // cual estaba: eso es lo que va a aparecer en "Historial" como un mes
-    // ya cerrado. Si no hay jugadores todavía (primera importación contra
-    // un Firebase recién armado, con el mock inicial), no hay nada real
-    // que archivar y nos lo salteamos.
-    if (team.players.length > 0) {
-      const historyId = historyIdFor(team.month_label);
-      await setDoc(doc(db, "history", historyId), {
+    // ¿Cambió el mes calendario desde el último import? Si month_key
+    // todavía no existe (primerísimo import contra este Firebase) no hay
+    // nada que archivar, arrancamos derecho. Si existe y es distinto al de
+    // hoy, significa que el mes anterior ya cerró: lo archivamos tal cual
+    // estaba, antes de pisarlo con los datos nuevos.
+    const isNewMonth = !!team.month_key && team.month_key !== nowPeriod;
+    if (isNewMonth && team.players.length > 0) {
+      await setDoc(doc(db, "history", team.month_key as string), {
         ...team,
         archived_at: serverTimestamp(),
       });
@@ -102,6 +104,8 @@ export const useTeamStore = create<TeamStore>((_set, get) => ({
       players: mergedPlayers,
       team_has_goalkeeper: teamHasGoalkeeper ?? team.team_has_goalkeeper,
       caja_chica_total: cajaChicaTotal,
+      month_label: monthLabelFor(now),
+      month_key: nowPeriod,
     };
     await setDoc(TEAM_DOC, updated, { merge: true });
   },

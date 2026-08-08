@@ -6,6 +6,7 @@ export const mockTeamData: TeamData = {
   team_has_goalkeeper: true, // Guido Salse cubre el arco
   caja_chica_total: 42500,
   month_label: "Julio 2026",
+  month_key: "2026-07",
   players: [
     {
       id: "p1",

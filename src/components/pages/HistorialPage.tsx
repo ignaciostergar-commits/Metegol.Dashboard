@@ -11,14 +11,14 @@ export function HistorialPage() {
 
   // El mes que está corriendo ahora mismo ya se ve en vivo en el resto del
   // dashboard: acá solo listamos meses ya cerrados, así que si por algún
-  // motivo quedó un snapshot con la misma etiqueta que el mes actual, lo
+  // motivo quedó un snapshot con el mismo período que el actual, lo
   // ocultamos para no duplicarlo.
-  const currentMonthLabel = useTeamStore((s) => s.team.month_label);
+  const currentMonthKey = useTeamStore((s) => s.team.month_key);
   const allMonths = useHistoryStore((s) => s.months);
   const historyLoaded = useHistoryStore((s) => s.loaded);
   const months = useMemo(
-    () => allMonths.filter((m) => m.month_label !== currentMonthLabel),
-    [allMonths, currentMonthLabel]
+    () => allMonths.filter((m) => m.month_key !== currentMonthKey),
+    [allMonths, currentMonthKey]
   );
 
   const [selectedIdx, setSelectedIdx] = useState(0);
