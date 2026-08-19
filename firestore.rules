@@ -46,6 +46,71 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Aceptación individual del contrato (uno por usuario). Cada usuario
+    // puede leer y escribir SOLO su propio documento; el admin además
+    // puede leer todos (para ver quién aceptó y quién está pendiente),
+    // pero no puede escribirlos en nombre de otro.
+    match /contractAcceptances/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update: if isSignedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    function isVotingOpen() {
+      return exists(/databases/$(database)/documents/votingStatus/main) &&
+        get(/databases/$(database)/documents/votingStatus/main).data.open == true;
+    }
+
+    // Estado de la votación (abierta/cerrada). Cualquiera logueado puede
+    // leerlo -lo necesita para saber si mostrar la papeleta o los
+    // resultados- pero nunca expone conteos. Solo el admin la abre/cierra.
+    match /votingStatus/main {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Cuánta gente ya votó (X de Y). Lectura exclusiva del admin: nunca
+    // dice a quién votó cada uno, solo un contador. Cualquier usuario que
+    // todavía no votó puede incrementarlo en +1 al emitir su voto (el
+    // cliente hace esta escritura junto con la creación de votes/{uid}).
+    match /votingParticipation/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin() ||
+        (isSignedIn() && isVotingOpen() &&
+         !exists(/databases/$(database)/documents/votes/$(request.auth.uid)));
+      allow delete: if isAdmin();
+    }
+
+    // Conteos agregados por candidato. Mientras la votación está abierta,
+    // NADIE puede leerlos (ni jugadores ni admin): solo se pueden leer una
+    // vez cerrada. La escritura (incrementar el conteo del candidato
+    // elegido) está permitida a cualquier usuario que todavía no emitió su
+    // voto, igual que arriba.
+    match /voteResults/main {
+      allow read: if isSignedIn() && !isVotingOpen();
+      allow create: if isAdmin();
+      allow update: if isAdmin() ||
+        (isSignedIn() && isVotingOpen() &&
+         !exists(/databases/$(database)/documents/votes/$(request.auth.uid)));
+      allow delete: if isAdmin();
+    }
+
+    // Voto individual de cada usuario. Solo el propio dueño puede leerlo
+    // (ni siquiera el admin): así se garantiza que nadie sepa a quién votó
+    // cada quien. Es de creación única -no se puede editar ni borrar una
+    // vez emitido-, salvo que el admin lo borre para reiniciar una ronda
+    // (eso no revela el contenido del voto, solo limpia el "ya voté").
+    match /votes/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid && isVotingOpen() &&
+        request.resource.data.captainId is string &&
+        request.resource.data.subcaptainId is string &&
+        request.resource.data.captainId != request.resource.data.subcaptainId;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     // Historial de fechas/partidos (si se usa a futuro): mismo esquema.
     match /matches/{matchId} {
       allow read: if isSignedIn();

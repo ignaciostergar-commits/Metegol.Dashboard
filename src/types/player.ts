@@ -66,6 +66,51 @@ export interface AppUser {
 // name, late_arrivals, undisclosed_absences, red_cards, yellow_cards,
 // matches_played_month, absences_month, is_figura_fecha, has_blooper, caja_chica_paid,
 // goals_month, is_valla_invicta_fecha, is_hat_trick_fecha
+// ---- Contrato: aceptación individual ----
+// Un doc por usuario en contractAcceptances/{uid}. Se crea/actualiza al
+// aceptar. Si contract.version sube (el admin editó el contrato), el
+// acceptedVersion queda vieja y la UI vuelve a pedir aceptación.
+export interface ContractAcceptance {
+  uid: string;
+  email: string;
+  name: string;
+  version: number;
+  acceptedAtMs: number | null; // Timestamp de Firestore -> millis en el cliente
+}
+
+// ---- Votación de Capitán y Subcapitán ----
+// Estado general de la votación (abierta/cerrada). Lo puede leer cualquier
+// usuario logueado: solo dice si está abierta, nunca cuenta votos.
+export interface VotingStatus {
+  open: boolean;
+  closedAt: number | null;
+}
+
+// Cantidad de gente que ya votó (X de Y). Documento aparte y de lectura
+// exclusiva del admin: nunca expone a qué candidato votó cada quien.
+export interface VotingParticipation {
+  votedCount: number;
+}
+
+// Conteos agregados por candidato. Solo se puede leer una vez que la
+// votación está cerrada (lo hacen cumplir las reglas de Firestore), así que
+// mientras está abierta nadie ve resultados parciales ni quién va ganando.
+export interface VoteResults {
+  captainCounts: Record<string, number>;
+  subcaptainCounts: Record<string, number>;
+}
+
+// El voto de un usuario puntual, en votes/{uid}. Solo el propio usuario
+// puede leer su documento (para saber "ya voté"); nadie más, ni siquiera el
+// admin, tiene permiso de leerlo. Es de creación única: las reglas
+// bloquean cualquier update o delete, así que una vez confirmado no se
+// puede modificar.
+export interface Vote {
+  captainId: string;
+  subcaptainId: string;
+  votedAtMs: number | null;
+}
+
 export interface PlayerImportRow {
   name: string;
   position?: string;

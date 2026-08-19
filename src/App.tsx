@@ -6,11 +6,12 @@ import { Dashboard } from "@/components/dashboard/Dashboard";
 import { JugadoresPage } from "@/components/pages/JugadoresPage";
 import { ContratoPage } from "@/components/pages/ContratoPage";
 import { HistorialPage } from "@/components/pages/HistorialPage";
+import { VotacionPage } from "@/components/pages/VotacionPage";
 import { ToastManager } from "@/components/ToastManager";
 import { Login } from "@/components/Login";
 import { useAuthStore } from "@/store/useAuthStore";
 
-export type View = "dashboard" | "jugadores" | "contrato" | "historial";
+export type View = "dashboard" | "jugadores" | "contrato" | "historial" | "votacion";
 
 function App() {
   const [view, setView] = useState<View>("dashboard");
@@ -51,6 +52,7 @@ function App() {
           {view === "jugadores" && <JugadoresPage />}
           {view === "contrato" && <ContratoPage />}
           {view === "historial" && <HistorialPage />}
+          {view === "votacion" && <VotacionPage onNavigate={handleNavigate} />}
         </main>
       </div>
 
