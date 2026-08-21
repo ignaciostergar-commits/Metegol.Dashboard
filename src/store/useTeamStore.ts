@@ -8,6 +8,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useAuthStore } from "@/store/useAuthStore";
 import type { Player, TeamData } from "@/types/player";
 import { mockTeamData } from "@/data/mockData";
 
@@ -172,37 +173,68 @@ export const useTeamStore = create<TeamStore>((_set, get) => ({
 // Escucha en vivo: cualquier cambio que haga el administrador (import de
 // Excel, ajuste de caja chica, etc.) se refleja al instante en todas las
 // pantallas abiertas, sin recargar ni volver a iniciar sesión.
-onSnapshot(
-  TEAM_DOC,
-  (snap) => {
-    if (snap.exists()) {
-      useTeamStore.setState({ team: snap.data() as TeamData, loaded: true });
-    } else {
-      // Primera vez que corre el proyecto contra este Firebase: sembramos
-      // el documento con los datos de ejemplo para no arrancar vacío.
-      //
-      // OJO: esto va dentro de una transacción para evitar una condición
-      // de carrera. Antes se hacía un setDoc() suelto (sin esperar), y si
-      // alguien importaba un Excel real casi al mismo tiempo, esa siembra
-      // podía llegar al servidor DESPUÉS del import real y pisarlo con los
-      // datos de ejemplo ("gana el último que escribe"). La transacción
-      // vuelve a chequear, en el mismo instante de guardar, si el
-      // documento sigue sin existir; si alguien ya escribió datos reales
-      // mientras tanto, Firestore reintenta la transacción sola, la ve
-      // existente y no siembra nada.
-      runTransaction(db, async (tx) => {
-        const fresh = await tx.get(TEAM_DOC);
-        if (!fresh.exists()) {
-          tx.set(TEAM_DOC, mockTeamData);
-        }
-      }).catch(() => {
-        /* si falla (p.ej. reglas de seguridad), no rompemos la UI */
-      });
-      useTeamStore.setState({ team: mockTeamData, loaded: true });
-    }
-  },
-  () => {
-    // Sin permisos o sin conexión: seguimos mostrando lo último conocido.
-    useTeamStore.setState({ loaded: true });
+//
+// Se envuelve en una función re-suscribible porque este listener se
+// registraba antes una sola vez, apenas cargaba el módulo — ANTES de que
+// Firebase Auth terminara de resolver la sesión. Si esa primera conexión
+// corría sin request.auth todavía disponible, Firestore la rechazaba
+// (allow read: if isSignedIn()) y el listener quedaba muerto para
+// siempre: el usuario se quedaba viendo el mock/datos viejos del equipo
+// sin ningún error visible, aunque estuviera logueado un instante
+// después. Con muchos jugadores entrando en simultáneo (lanzamiento), esa
+// carrera se vuelve mucho más probable. Por eso nos re-suscribimos cada
+// vez que cambia el usuario logueado, igual que ya se hace en
+// useContractStore para el documento del contrato.
+let unsubTeamDoc: (() => void) | null = null;
+
+function subscribeTeamDoc() {
+  if (unsubTeamDoc) {
+    unsubTeamDoc();
+    unsubTeamDoc = null;
   }
-);
+  unsubTeamDoc = onSnapshot(
+    TEAM_DOC,
+    (snap) => {
+      if (snap.exists()) {
+        useTeamStore.setState({ team: snap.data() as TeamData, loaded: true });
+      } else {
+        // Primera vez que corre el proyecto contra este Firebase: sembramos
+        // el documento con los datos de ejemplo para no arrancar vacío.
+        //
+        // OJO: esto va dentro de una transacción para evitar una condición
+        // de carrera. Antes se hacía un setDoc() suelto (sin esperar), y si
+        // alguien importaba un Excel real casi al mismo tiempo, esa siembra
+        // podía llegar al servidor DESPUÉS del import real y pisarlo con los
+        // datos de ejemplo ("gana el último que escribe"). La transacción
+        // vuelve a chequear, en el mismo instante de guardar, si el
+        // documento sigue sin existir; si alguien ya escribió datos reales
+        // mientras tanto, Firestore reintenta la transacción sola, la ve
+        // existente y no siembra nada.
+        runTransaction(db, async (tx) => {
+          const fresh = await tx.get(TEAM_DOC);
+          if (!fresh.exists()) {
+            tx.set(TEAM_DOC, mockTeamData);
+          }
+        }).catch(() => {
+          /* si falla (p.ej. reglas de seguridad), no rompemos la UI */
+        });
+        useTeamStore.setState({ team: mockTeamData, loaded: true });
+      }
+    },
+    () => {
+      // Sin permisos o sin conexión: seguimos mostrando lo último conocido.
+      useTeamStore.setState({ loaded: true });
+    }
+  );
+}
+
+subscribeTeamDoc();
+
+let lastUidForTeamDoc: string | null = useAuthStore.getState().user?.uid ?? null;
+useAuthStore.subscribe((state) => {
+  const uid = state.user?.uid ?? null;
+  if (uid !== lastUidForTeamDoc) {
+    lastUidForTeamDoc = uid;
+    subscribeTeamDoc();
+  }
+});

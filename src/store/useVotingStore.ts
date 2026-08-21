@@ -85,46 +85,74 @@ export const useVotingStore = create<VotingStore>(() => ({
   },
 }));
 
-onSnapshot(
-  STATUS_DOC,
-  (snap) => {
-    if (snap.exists()) {
-      const data = snap.data();
-      useVotingStore.setState({
-        status: {
-          open: data.open === true,
-          closedAt: typeof data.closedAt === "number" ? data.closedAt : null,
-        },
-        statusLoaded: true,
-      });
-    } else {
-      useVotingStore.setState({ status: { open: false, closedAt: null }, statusLoaded: true });
-    }
-  },
-  () => useVotingStore.setState({ statusLoaded: true })
-);
+// Estado de la votación (abierta/cerrada) y resultados agregados: mismo
+// patrón que useContractStore/useTeamStore. Antes estos dos listeners se
+// registraban una sola vez al cargar el módulo, ANTES de que Firebase Auth
+// terminara de resolver la sesión; si esa primera conexión perdía la
+// carrera contra la resolución de auth, Firestore la rechazaba y el
+// listener quedaba muerto para siempre (el usuario no se enteraba cuando
+// el admin abre/cierra la votación, ni veía los resultados actualizados
+// al cerrarse). Se envuelven en funciones re-suscribibles que se vuelven a
+// registrar cada vez que cambia el usuario logueado.
+let unsubStatusDoc: (() => void) | null = null;
 
-onSnapshot(
-  RESULTS_DOC,
-  (snap) => {
-    // Si la votación está abierta, las reglas de Firestore directamente
-    // rechazan esta lectura (permission-denied) y caemos al error callback
-    // de más abajo: por eso results queda en null mientras está abierta,
-    // sin que el cliente llegue a recibir conteos parciales.
-    if (snap.exists()) {
-      const data = snap.data();
-      useVotingStore.setState({
-        results: {
-          captainCounts: (data.captainCounts as Record<string, number>) ?? {},
-          subcaptainCounts: (data.subcaptainCounts as Record<string, number>) ?? {},
-        },
-      });
-    } else {
-      useVotingStore.setState({ results: null });
-    }
-  },
-  () => useVotingStore.setState({ results: null })
-);
+function subscribeStatusDoc() {
+  if (unsubStatusDoc) {
+    unsubStatusDoc();
+    unsubStatusDoc = null;
+  }
+  unsubStatusDoc = onSnapshot(
+    STATUS_DOC,
+    (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        useVotingStore.setState({
+          status: {
+            open: data.open === true,
+            closedAt: typeof data.closedAt === "number" ? data.closedAt : null,
+          },
+          statusLoaded: true,
+        });
+      } else {
+        useVotingStore.setState({ status: { open: false, closedAt: null }, statusLoaded: true });
+      }
+    },
+    () => useVotingStore.setState({ statusLoaded: true })
+  );
+}
+
+let unsubResultsDoc: (() => void) | null = null;
+
+function subscribeResultsDoc() {
+  if (unsubResultsDoc) {
+    unsubResultsDoc();
+    unsubResultsDoc = null;
+  }
+  unsubResultsDoc = onSnapshot(
+    RESULTS_DOC,
+    (snap) => {
+      // Si la votación está abierta, las reglas de Firestore directamente
+      // rechazan esta lectura (permission-denied) y caemos al error callback
+      // de más abajo: por eso results queda en null mientras está abierta,
+      // sin que el cliente llegue a recibir conteos parciales.
+      if (snap.exists()) {
+        const data = snap.data();
+        useVotingStore.setState({
+          results: {
+            captainCounts: (data.captainCounts as Record<string, number>) ?? {},
+            subcaptainCounts: (data.subcaptainCounts as Record<string, number>) ?? {},
+          },
+        });
+      } else {
+        useVotingStore.setState({ results: null });
+      }
+    },
+    () => useVotingStore.setState({ results: null })
+  );
+}
+
+subscribeStatusDoc();
+subscribeResultsDoc();
 
 // Participación (X de Y): la lectura de este doc está limitada a admin por
 // firestore.rules, así que a un jugador esta suscripción le falla en
@@ -196,6 +224,12 @@ useAuthStore.subscribe((state) => {
   if (uid !== lastUid) {
     lastUid = uid;
     subscribeMyVote(uid);
+    // status/results no dependen del rol, solo de tener una sesión de auth
+    // válida: se re-arman en cada cambio de uid (login/logout/otro usuario)
+    // para no quedar nunca pegados a una conexión que perdió la carrera
+    // contra la resolución de Firebase Auth.
+    subscribeStatusDoc();
+    subscribeResultsDoc();
   }
   if (isAdmin !== lastIsAdmin) {
     lastIsAdmin = isAdmin;

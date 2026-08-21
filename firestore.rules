@@ -40,6 +40,15 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Historial de meses cerrados (snapshots que useTeamStore.importPlayers
+    // archiva automáticamente antes de pisar team/main con un mes nuevo).
+    // Mismo esquema que team/: todos leen, solo el admin escribe (la
+    // escritura la hace el propio import, ejecutado siempre por el admin).
+    match /history/{monthId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     // Contrato del equipo: todos lo leen, solo el admin lo edita.
     match /contract/{docId} {
       allow read: if isSignedIn();
@@ -61,6 +70,10 @@ service cloud.firestore {
         get(/databases/$(database)/documents/votingStatus/main).data.open == true;
     }
 
+    function hasNotVoted() {
+      return !exists(/databases/$(database)/documents/votes/$(request.auth.uid));
+    }
+
     // Estado de la votación (abierta/cerrada). Cualquiera logueado puede
     // leerlo -lo necesita para saber si mostrar la papeleta o los
     // resultados- pero nunca expone conteos. Solo el admin la abre/cierra.
@@ -73,12 +86,21 @@ service cloud.firestore {
     // dice a quién votó cada uno, solo un contador. Cualquier usuario que
     // todavía no votó puede incrementarlo en +1 al emitir su voto (el
     // cliente hace esta escritura junto con la creación de votes/{uid}).
+    //
+    // Endurecido: además de la condición original (logueado, votación
+    // abierta, todavía no votó), ahora se exige que la escritura toque
+    // ÚNICAMENTE el campo votedCount y que el nuevo valor sea exactamente
+    // el anterior + 1. Así un usuario no puede, antes de votar, pisar el
+    // contador con un valor arbitrario ni agregar campos ajenos al
+    // documento; solo puede hacer el mismo incremento atómico de +1 que ya
+    // hace la app (updateDoc(..., { votedCount: increment(1) })).
     match /votingParticipation/main {
       allow read: if isAdmin();
       allow create: if isAdmin();
       allow update: if isAdmin() ||
-        (isSignedIn() && isVotingOpen() &&
-         !exists(/databases/$(database)/documents/votes/$(request.auth.uid)));
+        (isSignedIn() && isVotingOpen() && hasNotVoted() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votedCount']) &&
+         request.resource.data.votedCount == resource.data.votedCount + 1);
       allow delete: if isAdmin();
     }
 
@@ -87,12 +109,23 @@ service cloud.firestore {
     // vez cerrada. La escritura (incrementar el conteo del candidato
     // elegido) está permitida a cualquier usuario que todavía no emitió su
     // voto, igual que arriba.
+    //
+    // Endurecido: se restringe la escritura de un usuario no-admin a tocar
+    // ÚNICAMENTE los campos captainCounts/subcaptainCounts (no puede
+    // reescribir otros campos ni cambiar la forma del documento). Esto
+    // reduce el margen de manipulación frente a la regla anterior, que
+    // permitía cualquier update al documento completo mientras no hubiera
+    // votado. Una validación exacta de "solo +1 a una sola clave dentro
+    // del mapa" requeriría comparar mapas anidados, algo frágil de
+    // expresar en este lenguaje de reglas sin arriesgar bloquear votos
+    // legítimos; queda documentado como mejora futura (mover el conteo a
+    // una Cloud Function con Admin SDK).
     match /voteResults/main {
       allow read: if isSignedIn() && !isVotingOpen();
       allow create: if isAdmin();
       allow update: if isAdmin() ||
-        (isSignedIn() && isVotingOpen() &&
-         !exists(/databases/$(database)/documents/votes/$(request.auth.uid)));
+        (isSignedIn() && isVotingOpen() && hasNotVoted() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['captainCounts', 'subcaptainCounts']));
       allow delete: if isAdmin();
     }
 
