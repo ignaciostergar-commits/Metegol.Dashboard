@@ -102,32 +102,63 @@ function acceptanceFromDoc(id: string, data: Record<string, unknown>): ContractA
   };
 }
 
-// Contrato vigente: en vivo para todos. Si todavía no existe el documento
-// (primera vez que se usa esta funcionalidad) y quien mira es admin, lo
-// sembramos con el contenido por defecto y versión 1.
-onSnapshot(
-  CONTRACT_DOC,
-  (snap) => {
-    if (snap.exists()) {
-      const data = snap.data();
-      useContractStore.setState({
-        content: typeof data.content === "string" ? data.content : DEFAULT_CONTRACT_CONTENT,
-        version: typeof data.version === "number" ? data.version : 1,
-        loaded: true,
-      });
-    } else {
-      useContractStore.setState({ loaded: true });
-      if (useAuthStore.getState().user?.role === "admin") {
-        setDoc(CONTRACT_DOC, {
-          content: DEFAULT_CONTRACT_CONTENT,
-          version: 1,
-          updatedAt: Date.now(),
-        }).catch(() => undefined);
+// Contrato vigente: en vivo para todos. Se envuelve en una función
+// re-suscribible porque este listener se registra apenas carga el módulo,
+// ANTES de que Firebase Auth termine de resolver la sesión. Si esa primera
+// conexión corre sin request.auth todavía disponible, Firestore la rechaza
+// (allow read: if isSignedIn()) y el listener queda muerto para siempre: el
+// usuario deja de recibir actualizaciones en vivo del contrato aunque ya
+// esté logueado un instante después (esto era lo que causaba que el ADMIN
+// viera su propio cambio -sesión ya vieja y autenticada- pero otros
+// usuarios se quedaran con el contrato anterior hasta recargar la página).
+// Por eso nos re-suscribimos cada vez que cambia el usuario logueado,
+// igual que ya se hace más abajo para myAcceptance.
+let unsubContractDoc: (() => void) | null = null;
+
+function subscribeContractDoc() {
+  if (unsubContractDoc) {
+    unsubContractDoc();
+    unsubContractDoc = null;
+  }
+  unsubContractDoc = onSnapshot(
+    CONTRACT_DOC,
+    (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        useContractStore.setState({
+          content: typeof data.content === "string" ? data.content : DEFAULT_CONTRACT_CONTENT,
+          version: typeof data.version === "number" ? data.version : 1,
+          loaded: true,
+        });
+      } else {
+        useContractStore.setState({ loaded: true });
+        if (useAuthStore.getState().user?.role === "admin") {
+          setDoc(CONTRACT_DOC, {
+            content: DEFAULT_CONTRACT_CONTENT,
+            version: 1,
+            updatedAt: Date.now(),
+          }).catch(() => undefined);
+        }
       }
-    }
-  },
-  () => useContractStore.setState({ loaded: true })
-);
+    },
+    () => useContractStore.setState({ loaded: true })
+  );
+}
+
+// Primera suscripción al cargar el módulo.
+subscribeContractDoc();
+
+// Re-suscripción cada vez que cambia el uid logueado (login, logout, o
+// cambio de usuario), para no quedar nunca "pegado" a una conexión que
+// pudo haber perdido la carrera contra la resolución de Auth.
+let lastUidForContractDoc: string | null = useAuthStore.getState().user?.uid ?? null;
+useAuthStore.subscribe((state) => {
+  const uid = state.user?.uid ?? null;
+  if (uid !== lastUidForContractDoc) {
+    lastUidForContractDoc = uid;
+    subscribeContractDoc();
+  }
+});
 
 // Aceptación propia: se re-suscribe cada vez que cambia el usuario logueado
 // (mismo patrón que useAuthStore usa para su doc de perfil).
