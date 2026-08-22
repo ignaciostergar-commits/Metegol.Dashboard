@@ -60,10 +60,13 @@ export function ImportButton() {
     }
   }
 
+  const disabled = loading || !teamLoaded;
+
   return (
     <>
       <input
         ref={inputRef}
+        id="import-file-input"
         type="file"
         // Safari/iOS resuelve "accept" contra un UTI (Uniform Type
         // Identifier) de Apple, no contra la extensión como texto plano.
@@ -75,14 +78,44 @@ export function ImportButton() {
         // confiable de resolverlo. Chrome/Edge ya funcionaban bien con
         // cualquiera de las dos formas, así que esto no les cambia nada.
         accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        className="hidden"
+        // sr-only (en vez de "hidden"/display:none): mantiene al input con
+        // layout real en el árbol de render, solo invisible por CSS
+        // (position absolute + tamaño 1px + overflow hidden). iOS Safari
+        // puede ignorar en silencio un click programático
+        // (inputRef.current?.click()) sobre un input con display:none, por
+        // no haber tenido nunca presencia real en el render tree. Con
+        // sr-only + activación nativa por <label htmlFor>, la apertura del
+        // selector queda a cargo del navegador como parte directa del
+        // mismo gesto táctil, sin depender de que WebKit "honre" un click
+        // sintético.
+        className="sr-only"
         onChange={handleFileChange}
       />
-      <button
-        onClick={() => inputRef.current?.click()}
-        disabled={loading || !teamLoaded}
+      {/*
+        Antes: <button onClick={() => inputRef.current?.click()}>.
+        Ahora: <label htmlFor="import-file-input">. Un <label> asociado a
+        un input por htmlFor/id dispara la activación del input de forma
+        nativa al tocarlo -no vía JavaScript-, que es el mecanismo más
+        confiable en iOS Safari para abrir el selector de archivos.
+
+        <label> no tiene atributo "disabled" nativo, así que el gate de
+        loading/teamLoaded se replica a mano: mientras "disabled" es true,
+        se evita la apertura del input con preventDefault en el propio
+        click del label (además de las clases visuales/aria que ya tenía
+        el <button>). El aspecto visual queda idéntico al botón anterior.
+      */}
+      <label
+        htmlFor="import-file-input"
+        aria-disabled={disabled}
         title={!teamLoaded ? "Sincronizando datos del equipo..." : undefined}
-        className="inline-flex items-center gap-2 rounded-lg bg-accent-green px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-base-950 shadow-soft hover:bg-accent-emerald transition-colors disabled:opacity-60"
+        onClick={(e) => {
+          if (disabled) e.preventDefault();
+        }}
+        className={`inline-flex items-center gap-2 rounded-lg bg-accent-green px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-base-950 shadow-soft transition-colors ${
+          disabled
+            ? "opacity-60 cursor-not-allowed"
+            : "cursor-pointer hover:bg-accent-emerald"
+        }`}
       >
         {loading || !teamLoaded ? (
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -92,7 +125,7 @@ export function ImportButton() {
         <span className="hidden sm:inline">
           {loading ? "Importando..." : !teamLoaded ? "Sincronizando..." : "Importar Datos"}
         </span>
-      </button>
+      </label>
     </>
   );
 }
