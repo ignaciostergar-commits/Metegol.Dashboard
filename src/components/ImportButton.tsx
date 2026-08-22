@@ -65,7 +65,16 @@ export function ImportButton() {
       <input
         ref={inputRef}
         type="file"
-        accept=".csv,.xlsx,.xls"
+        // Safari/iOS resuelve "accept" contra un UTI (Uniform Type
+        // Identifier) de Apple, no contra la extensión como texto plano.
+        // Si el atributo trae SOLO extensiones (".xlsx", ".xls"), iOS
+        // puede fallar al resolver ese UTI y no abrir ningún selector
+        // -ni Fotos, ni Cámara, ni "Examinar" (que es la opción que lleva
+        // a la app Archivos y de ahí a Google Drive)-, sin ningún error
+        // visible. Sumar los MIME types reales le da a iOS una forma
+        // confiable de resolverlo. Chrome/Edge ya funcionaban bien con
+        // cualquiera de las dos formas, así que esto no les cambia nada.
+        accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         className="hidden"
         onChange={handleFileChange}
       />

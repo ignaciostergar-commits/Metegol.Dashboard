@@ -6,7 +6,6 @@ import {
   runTransaction,
   serverTimestamp,
   setDoc,
-  updateDoc,
   type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -56,6 +55,25 @@ export const useVotingStore = create<VotingStore>(() => ({
     await setDoc(STATUS_DOC, { open: false, closedAt: Date.now() }, { merge: true });
   },
 
+  // FIX B: las tres escrituras (conteos agregados, participación y el
+  // voto individual) corren dentro de UNA sola transacción -ya no hay
+  // updateDoc() sueltos después de crear votes/{uid}-, así que o se
+  // aplican las tres o ninguna.
+  //
+  // Orden interno DENTRO de la transacción (importante, no es arbitrario):
+  // los incrementos de voteResults/main y votingParticipation/main van
+  // ANTES del set() de votes/{uid}. Esto es al revés de "primero registro
+  // el voto, después sumo los contadores" porque las reglas de Firestore
+  // para esos dos documentos exigen !exists(votes/{uid}) ("todavía no
+  // votó"). Dentro de una misma transacción, cada escritura se evalúa
+  // contra el estado que dejaron las escrituras ANTERIORES de esa misma
+  // transacción: si votes/{uid} se creara primero, los incrementos
+  // siguientes verían el voto como ya existente y la regla los
+  // rechazaría en silencio (esto era exactamente lo que pasaba: el voto
+  // quedaba registrado pero voteResults/main nunca se actualizaba). Con
+  // los incrementos primero y el voto al final, todo queda autorizado y
+  // sigue siendo 100% atómico: si cualquier paso falla, la transacción
+  // entera se descarta y no se aplica ninguno.
   castVote: async (captainId, subcaptainId) => {
     const user = useAuthStore.getState().user;
     if (!user) throw new Error("not-authenticated");
@@ -65,35 +83,34 @@ export const useVotingStore = create<VotingStore>(() => ({
     const voteRef = doc(db, "votes", user.uid);
 
     await runTransaction(db, async (tx) => {
+      // 1. Leer votes/{uid}.
       const existing = await tx.get(voteRef);
+      // 2. Si ya existe, se lanza already-voted (nada se escribe).
       if (existing.exists()) {
         throw new Error("already-voted");
       }
+
+      // 4. Incrementar el contador del capitán elegido.
+      // 5. Incrementar el contador del subcapitán elegido.
+      tx.update(RESULTS_DOC, {
+        [`captainCounts.${captainId}`]: increment(1),
+        [`subcaptainCounts.${subcaptainId}`]: increment(1),
+      });
+
+      // 6. Incrementar votingParticipation/main.votedCount.
+      tx.update(PARTICIPATION_DOC, { votedCount: increment(1) });
+
+      // 3. Crear votes/{uid} (al final, ver nota de orden arriba).
       tx.set(voteRef, { captainId, subcaptainId, votedAt: serverTimestamp() });
     });
-
-    // Los contadores agregados se incrementan aparte (fuera de la
-    // transacción de arriba, que ya garantizó el "una sola vez") usando
-    // increment() atómico: así nunca hace falta leer el total actual, y
-    // nadie que mire la lectura de este documento puede reconstruir a
-    // quién votó cada usuario a partir de esta escritura.
-    await updateDoc(RESULTS_DOC, {
-      [`captainCounts.${captainId}`]: increment(1),
-      [`subcaptainCounts.${subcaptainId}`]: increment(1),
-    });
-    await updateDoc(PARTICIPATION_DOC, { votedCount: increment(1) });
   },
 }));
 
-// Estado de la votación (abierta/cerrada) y resultados agregados: mismo
-// patrón que useContractStore/useTeamStore. Antes estos dos listeners se
-// registraban una sola vez al cargar el módulo, ANTES de que Firebase Auth
-// terminara de resolver la sesión; si esa primera conexión perdía la
-// carrera contra la resolución de auth, Firestore la rechazaba y el
-// listener quedaba muerto para siempre (el usuario no se enteraba cuando
-// el admin abre/cierra la votación, ni veía los resultados actualizados
-// al cerrarse). Se envuelven en funciones re-suscribibles que se vuelven a
-// registrar cada vez que cambia el usuario logueado.
+// STATUS_DOC: se re-suscribe con cada cambio de usuario logueado, igual
+// que el resto de los stores (contrato, equipo, historial). Antes se
+// registraba una sola vez al cargar el módulo, ANTES de que Firebase Auth
+// resolviera la sesión; si esa primera conexión perdía esa carrera,
+// Firestore la rechazaba y el listener quedaba muerto para siempre.
 let unsubStatusDoc: (() => void) | null = null;
 
 function subscribeStatusDoc() {
@@ -121,6 +138,30 @@ function subscribeStatusDoc() {
   );
 }
 
+// FIX A: RESULTS_DOC.
+//
+// La regla de lectura de voteResults/main es:
+//   allow read: if isSignedIn() && !isVotingOpen();
+// Mientras la votación está abierta, cualquier listener activo sobre este
+// documento queda sin permiso: Firestore lo corta con permission-denied y
+// el listener se apaga solo -no se reintenta-. Por eso "results" se maneja
+// así:
+//   - Login: se crea la suscripción (ver bloque de useAuthStore.subscribe
+//     más abajo, igual que STATUS_DOC).
+//   - Logout: subscribeResultsDoc() primero desuscribe la anterior; al no
+//     haber uid, no hace falta una activa, y results ya había quedado en
+//     null la última vez que la regla lo rechazó.
+//   - Cambio de usuario: mismo bloque de abajo, se desuscribe la vieja y
+//     se crea una nueva para el nuevo uid.
+//   - Mientras la votación está abierta: el callback de error de
+//     onSnapshot pone results en null (sin tirar ninguna excepción visible
+//     para el usuario; onSnapshot nunca deja de "andar" por esto, solo dejó
+//     de recibir datos).
+//   - Al cerrarse la votación: como este mismo módulo escucha sus propios
+//     cambios de status.open (ver el useVotingStore.subscribe de abajo),
+//     apenas STATUS_DOC informa que se cerró, se vuelve a llamar
+//     subscribeResultsDoc() con una conexión nueva, que esta vez sí tiene
+//     permiso y trae los resultados reales.
 let unsubResultsDoc: (() => void) | null = null;
 
 function subscribeResultsDoc() {
@@ -131,10 +172,6 @@ function subscribeResultsDoc() {
   unsubResultsDoc = onSnapshot(
     RESULTS_DOC,
     (snap) => {
-      // Si la votación está abierta, las reglas de Firestore directamente
-      // rechazan esta lectura (permission-denied) y caemos al error callback
-      // de más abajo: por eso results queda en null mientras está abierta,
-      // sin que el cliente llegue a recibir conteos parciales.
       if (snap.exists()) {
         const data = snap.data();
         useVotingStore.setState({
@@ -147,12 +184,28 @@ function subscribeResultsDoc() {
         useVotingStore.setState({ results: null });
       }
     },
-    () => useVotingStore.setState({ results: null })
+    () => {
+      // Lectura rechazada (votación abierta) o sin conexión: results
+      // queda en null. No se propaga ningún error a la UI.
+      useVotingStore.setState({ results: null });
+    }
   );
 }
 
 subscribeStatusDoc();
 subscribeResultsDoc();
+
+// Cada vez que cambia status.open (abrir O cerrar) nos volvemos a
+// suscribir a RESULTS_DOC con una conexión nueva, para no quedar nunca
+// pegados a un listener que perdió el permiso de lectura al abrirse la
+// votación y no lo recupera solo al cerrarse.
+let lastVotingOpen = useVotingStore.getState().status.open;
+useVotingStore.subscribe((state) => {
+  if (state.status.open !== lastVotingOpen) {
+    lastVotingOpen = state.status.open;
+    subscribeResultsDoc();
+  }
+});
 
 // Participación (X de Y): la lectura de este doc está limitada a admin por
 // firestore.rules, así que a un jugador esta suscripción le falla en
@@ -216,6 +269,9 @@ function subscribeMyVote(uid: string | null) {
   );
 }
 
+// FIX A (login/logout/cambio de usuario): mismo bloque que ya cubría
+// STATUS_DOC y myVote, ahora también dispara subscribeResultsDoc() en
+// cada cambio de uid.
 let lastUid: string | null = null;
 let lastIsAdmin = false;
 useAuthStore.subscribe((state) => {
@@ -224,10 +280,6 @@ useAuthStore.subscribe((state) => {
   if (uid !== lastUid) {
     lastUid = uid;
     subscribeMyVote(uid);
-    // status/results no dependen del rol, solo de tener una sesión de auth
-    // válida: se re-arman en cada cambio de uid (login/logout/otro usuario)
-    // para no quedar nunca pegados a una conexión que perdió la carrera
-    // contra la resolución de Firebase Auth.
     subscribeStatusDoc();
     subscribeResultsDoc();
   }
