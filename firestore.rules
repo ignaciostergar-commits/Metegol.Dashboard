@@ -144,6 +144,115 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---- Votacion de Figura y Casco de la fecha ----
+    //
+    // Mismo patron que Capitan arriba (ronda global unica, sin entidad de
+    // fecha/partido), duplicado x2 (figura, casco) para que sus estados
+    // nunca se mezclen. Capitan NO se toca: sigue usando exactamente las
+    // reglas de arriba, sin cambios.
+    //
+    // Diferencia deliberada respecto de voteResults/main de Capitan:
+    // figuraVoteResults/main y cascoVoteResults/main son de lectura
+    // EXCLUSIVA del admin, SIEMPRE -nunca de un jugador, ni siquiera una
+    // vez cerrada la votacion (Capitan si deja leer voteResults/main a
+    // cualquier usuario logueado una vez cerrada). Es asi porque se pidio
+    // explicitamente que ningun jugador vea cantidades de votos en ningun
+    // momento; el resultado (sin cantidades) se expone aparte en
+    // <type>VotingStatus/main.winnerIds, que si es publico.
+    //
+    // Limite ya conocido y aceptado (igual que en voteResults/main de
+    // Capitan, documentado ahi mismo arriba): la escritura no-admin de
+    // "counts" valida que solo se toque ese campo, pero no valida la
+    // magnitud exacta del incremento -queda como mejora futura (Cloud
+    // Function con Admin SDK), en paridad con la limitacion ya aceptada de
+    // Capitan.
+
+    function isFiguraVotingOpen() {
+      return exists(/databases/$(database)/documents/figuraVotingStatus/main) &&
+        get(/databases/$(database)/documents/figuraVotingStatus/main).data.open == true;
+    }
+
+    function hasNotVotedFigura() {
+      return !exists(/databases/$(database)/documents/figuraVotes/$(request.auth.uid));
+    }
+
+    function isCascoVotingOpen() {
+      return exists(/databases/$(database)/documents/cascoVotingStatus/main) &&
+        get(/databases/$(database)/documents/cascoVotingStatus/main).data.open == true;
+    }
+
+    function hasNotVotedCasco() {
+      return !exists(/databases/$(database)/documents/cascoVotes/$(request.auth.uid));
+    }
+
+    match /figuraVotingStatus/main {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /figuraVotingParticipation/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin() ||
+        (isSignedIn() && isFiguraVotingOpen() && hasNotVotedFigura() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votedCount']) &&
+         request.resource.data.votedCount == resource.data.votedCount + 1);
+      allow delete: if isAdmin();
+    }
+
+    match /figuraVoteResults/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin() ||
+        (isSignedIn() && isFiguraVotingOpen() && hasNotVotedFigura() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts']));
+      allow delete: if isAdmin();
+    }
+
+    match /figuraVotes/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid && isFiguraVotingOpen() &&
+        request.resource.data.twoVotesPlayerId is string &&
+        request.resource.data.oneVotePlayerId is string &&
+        request.resource.data.twoVotesPlayerId != request.resource.data.oneVotePlayerId;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /cascoVotingStatus/main {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /cascoVotingParticipation/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin() ||
+        (isSignedIn() && isCascoVotingOpen() && hasNotVotedCasco() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votedCount']) &&
+         request.resource.data.votedCount == resource.data.votedCount + 1);
+      allow delete: if isAdmin();
+    }
+
+    match /cascoVoteResults/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin() ||
+        (isSignedIn() && isCascoVotingOpen() && hasNotVotedCasco() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts']));
+      allow delete: if isAdmin();
+    }
+
+    match /cascoVotes/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid && isCascoVotingOpen() &&
+        request.resource.data.twoVotesPlayerId is string &&
+        request.resource.data.oneVotePlayerId is string &&
+        request.resource.data.twoVotesPlayerId != request.resource.data.oneVotePlayerId;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     // Historial de fechas/partidos (si se usa a futuro): mismo esquema.
     match /matches/{matchId} {
       allow read: if isSignedIn();

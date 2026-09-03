@@ -7,11 +7,12 @@ import { JugadoresPage } from "@/components/pages/JugadoresPage";
 import { ContratoPage } from "@/components/pages/ContratoPage";
 import { HistorialPage } from "@/components/pages/HistorialPage";
 import { VotacionPage } from "@/components/pages/VotacionPage";
+import { FiguraCascoPage } from "@/components/pages/FiguraCascoPage";
 import { ToastManager } from "@/components/ToastManager";
 import { Login } from "@/components/Login";
 import { useAuthStore } from "@/store/useAuthStore";
 
-export type View = "dashboard" | "jugadores" | "contrato" | "historial" | "votacion";
+export type View = "dashboard" | "jugadores" | "contrato" | "historial" | "votacion" | "figura-casco";
 
 function App() {
   const [view, setView] = useState<View>("dashboard");
@@ -53,6 +54,7 @@ function App() {
           {view === "contrato" && <ContratoPage />}
           {view === "historial" && <HistorialPage />}
           {view === "votacion" && <VotacionPage onNavigate={handleNavigate} />}
+          {view === "figura-casco" && <FiguraCascoPage onNavigate={handleNavigate} />}
         </main>
       </div>
 
