@@ -111,6 +111,21 @@ function rowToPlayer(row: PlayerImportRow, index: number): Player {
   };
 }
 
+// Reconoce tanto "Arquero" completo como abreviaturas comunes ("Arq",
+// "Medio/Arq", "Defensor/Arq", etc.), sin distinguir mayúsculas/tildes.
+// Extraída de ImportButton.tsx (que sigue con su propia copia inline, sin
+// tocar) para que Bloque 2 (ImportarFechaButton.tsx) pueda reutilizarla
+// sin duplicarla de cero.
+export function detectHasGoalkeeper(players: Player[]): boolean {
+  return players.some((p) =>
+    (p.position ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .includes("arq")
+  );
+}
+
 /**
  * Parsea un archivo CSV usando papaparse.
  */

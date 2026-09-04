@@ -253,10 +253,200 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Historial de fechas/partidos (si se usa a futuro): mismo esquema.
+    // ---- Fecha/Partido (Fase 2, Bloque 1) ----
+    //
+    // Reemplaza el stub anterior ("si se usa a futuro"). Por ahora solo
+    // cubre la entidad Fecha en sí (crear/listar/cerrar) -playerStats
+    // (Bloque 2) y Figura/Casco por fecha (Bloque 3) se agregan en sus
+    // propios bloques, con sus propias reglas namespaced bajo
+    // matches/{matchId}. La votación de Capitán/Subcapitán NO pasa por
+    // acá: sigue siendo la ronda global de toda la temporada
+    // (votingStatus/main y compañía, arriba, sin cambios).
+
+    // matchNumbers/{number}: reserva PERMANENTE de un número de fecha.
+    // Mismo mecanismo de "creación única" que ya usa votes/{uid} para
+    // bloquear el doble voto (existencia de un documento como prueba de
+    // unicidad), aplicado acá a "number" en vez de a "uid". Sin delete
+    // nunca -ni admin-, para que no pueda quedar un número liberado
+    // mientras el matches/{matchId} correspondiente siga existiendo (y
+    // los matches tampoco se pueden borrar, ver más abajo). Una
+    // corrección de un número mal tipeado queda, a propósito, fuera de
+    // este bloque: sería una operación administrativa aparte que
+    // mantenga consistencia entre ambos documentos.
+    match /matchNumbers/{number} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin();
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // Documento de cada fecha. Nunca contiene conteos de votos ni datos
+    // sensibles -por eso es seguro que cualquier usuario logueado lo lea
+    // completo. La escritura es 100% admin. Sin delete: una fecha ya
+    // creada queda para siempre.
+    //
+    // "status: closed" es, a propósito, un bloqueo duro: los Bloques 2 y
+    // 3 van a exigir en SUS PROPIAS reglas (playerStats, votos de
+    // Figura/Casco) que este documento tenga status == "open" antes de
+    // permitir escribir -acá en Bloque 1 no hay todavía ningún otro
+    // recurso que bloquear, solo el propio match.
     match /matches/{matchId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.createdBy == request.auth.uid &&
+        request.resource.data.status == "open" &&
+        request.resource.data.number is int &&
+        request.resource.data.date is string;
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ---- Bloque 2: playerStats por fecha ----
+    //
+    // Estadísticas de un jugador en UNA fecha puntual. Lectura pública
+    // (igual que team/main hoy), escritura 100% admin Y con la fecha
+    // todavía abierta -bloqueo duro server-side, no solo en la UI: una vez
+    // que matches/{matchId}.status == "closed", ni el admin puede
+    // crear/actualizar/borrar playerStats de esa fecha. Mismo nivel de
+    // confianza que team/main hoy: no se valida la forma de cada campo,
+    // solo quién y en qué estado de la fecha puede escribir.
+    function isMatchOpen(matchId) {
+      return exists(/databases/$(database)/documents/matches/$(matchId)) &&
+        get(/databases/$(database)/documents/matches/$(matchId)).data.status == "open";
+    }
+
+    match /matches/{matchId}/playerStats/{playerId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isMatchOpen(matchId);
+    }
+
+    // ---- Bloque 3: Figura y Casco por fecha ----
+    //
+    // Mismo espíritu que Capitán y que la versión global de Figura/Casco
+    // arriba (sin tocar ninguna de las dos), namespaced bajo
+    // matches/{matchId} y reutilizando isMatchOpen(matchId) ya definida
+    // arriba para Bloque 2. Un solo admin en este sistema -sin necesidad
+    // de proteger contra dos admins concurrentes-, pero igual se restringe
+    // cada escritura, incluso la del admin, a tocar únicamente los campos
+    // que ese documento puede tener: votedCount/counts no se pueden pisar
+    // con un valor arbitrario aprovechando un "allow write: if isAdmin()"
+    // genérico.
+    function isFiguraOpen(matchId) {
+      return isMatchOpen(matchId) &&
+        exists(/databases/$(database)/documents/matches/$(matchId)/figuraStatus/main) &&
+        get(/databases/$(database)/documents/matches/$(matchId)/figuraStatus/main).data.open == true;
+    }
+    function hasNotVotedFiguraFecha(matchId) {
+      return !exists(/databases/$(database)/documents/matches/$(matchId)/figuraVotes/$(request.auth.uid));
+    }
+    function isCascoOpen(matchId) {
+      return isMatchOpen(matchId) &&
+        exists(/databases/$(database)/documents/matches/$(matchId)/cascoStatus/main) &&
+        get(/databases/$(database)/documents/matches/$(matchId)/cascoStatus/main).data.open == true;
+    }
+    function hasNotVotedCascoFecha(matchId) {
+      return !exists(/databases/$(database)/documents/matches/$(matchId)/cascoVotes/$(request.auth.uid));
+    }
+
+    // figuraStatus: "cerrar" (open == false) siempre está permitido al
+    // admin, sin importar el estado de la fecha -evita un callejón sin
+    // salida si la fecha se cerró mientras esta votación seguía
+    // técnicamente abierta (no se fuerza figuraOpen a false en cascada al
+    // cerrar la fecha). "Abrir"/reabrir (open == true) sí exige que la
+    // fecha esté abierta. Los votos igual quedan bloqueados en ese
+    // escenario porque isFiguraOpen() chequea isMatchOpen() aparte.
+    match /matches/{matchId}/figuraStatus/main {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isMatchOpen(matchId) &&
+        request.resource.data.keys().hasOnly(['open', 'closedAt']) &&
+        request.resource.data.open == true;
+      allow update: if isAdmin() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['open', 'closedAt']) &&
+        (request.resource.data.open == false || isMatchOpen(matchId));
+      allow delete: if false;
+    }
+
+    match /matches/{matchId}/figuraParticipation/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isMatchOpen(matchId) &&
+        request.resource.data.keys().hasOnly(['votedCount']) &&
+        request.resource.data.votedCount == 0;
+      allow update: if
+        (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votedCount'])) ||
+        (isSignedIn() && isFiguraOpen(matchId) && hasNotVotedFiguraFecha(matchId) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votedCount']) &&
+         request.resource.data.votedCount == resource.data.votedCount + 1);
+      allow delete: if isAdmin();
+    }
+
+    match /matches/{matchId}/figuraVoteResults/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isMatchOpen(matchId) &&
+        request.resource.data.keys().hasOnly(['counts']) &&
+        request.resource.data.counts == {};
+      allow update: if
+        (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts'])) ||
+        (isSignedIn() && isFiguraOpen(matchId) && hasNotVotedFiguraFecha(matchId) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts']));
+      allow delete: if isAdmin();
+    }
+
+    match /matches/{matchId}/figuraVotes/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid && isFiguraOpen(matchId) &&
+        request.resource.data.keys().hasOnly(['twoVotesPlayerId', 'oneVotePlayerId', 'votedAt']) &&
+        request.resource.data.twoVotesPlayerId is string &&
+        request.resource.data.oneVotePlayerId is string &&
+        request.resource.data.twoVotesPlayerId != request.resource.data.oneVotePlayerId;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /matches/{matchId}/cascoStatus/main {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isMatchOpen(matchId) &&
+        request.resource.data.keys().hasOnly(['open', 'closedAt']) &&
+        request.resource.data.open == true;
+      allow update: if isAdmin() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['open', 'closedAt']) &&
+        (request.resource.data.open == false || isMatchOpen(matchId));
+      allow delete: if false;
+    }
+
+    match /matches/{matchId}/cascoParticipation/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isMatchOpen(matchId) &&
+        request.resource.data.keys().hasOnly(['votedCount']) &&
+        request.resource.data.votedCount == 0;
+      allow update: if
+        (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votedCount'])) ||
+        (isSignedIn() && isCascoOpen(matchId) && hasNotVotedCascoFecha(matchId) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votedCount']) &&
+         request.resource.data.votedCount == resource.data.votedCount + 1);
+      allow delete: if isAdmin();
+    }
+
+    match /matches/{matchId}/cascoVoteResults/main {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isMatchOpen(matchId) &&
+        request.resource.data.keys().hasOnly(['counts']) &&
+        request.resource.data.counts == {};
+      allow update: if
+        (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts'])) ||
+        (isSignedIn() && isCascoOpen(matchId) && hasNotVotedCascoFecha(matchId) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts']));
+      allow delete: if isAdmin();
+    }
+
+    match /matches/{matchId}/cascoVotes/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid && isCascoOpen(matchId) &&
+        request.resource.data.keys().hasOnly(['twoVotesPlayerId', 'oneVotePlayerId', 'votedAt']) &&
+        request.resource.data.twoVotesPlayerId is string &&
+        request.resource.data.oneVotePlayerId is string &&
+        request.resource.data.twoVotesPlayerId != request.resource.data.oneVotePlayerId;
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     // Por defecto, todo lo demás queda cerrado.
