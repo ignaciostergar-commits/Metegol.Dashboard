@@ -138,9 +138,20 @@ export const useTeamStore = create<TeamStore>((_set, get) => ({
     return team.players.find((p) => p.has_blooper);
   },
 
+  // Podio: primero quien mas partidos jugo en el mes; en caso de empate en
+  // partidos, gana quien menos falto. Si tambien empatan las faltas, se
+  // mantiene el orden relativo que ya traian en team.players (Array.sort
+  // es estable desde ES2019) -mismo comportamiento neutro que ya tenia el
+  // ranking ante un empate, no se agrega ningun criterio nuevo para ese
+  // caso.
   getRankingAsistenciaMes: () => {
     const { team } = get();
-    return [...team.players].sort((a, b) => a.absences_month - b.absences_month);
+    return [...team.players].sort((a, b) => {
+      if (b.matches_played_month !== a.matches_played_month) {
+        return b.matches_played_month - a.matches_played_month;
+      }
+      return a.absences_month - b.absences_month;
+    });
   },
 
   getRankingGoleadores: () => {

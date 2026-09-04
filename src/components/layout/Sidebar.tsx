@@ -1,4 +1,4 @@
-import { LayoutGrid, FileText, Users, Trophy, Vote, Star, Calendar, X } from "lucide-react";
+import { LayoutGrid, FileText, Users, Trophy, Vote, Calendar, X } from "lucide-react";
 import type { View } from "@/App";
 import escudo from "@/assets/escudo.jpeg";
 
@@ -7,7 +7,6 @@ const navItems: { icon: typeof LayoutGrid; label: string; view: View }[] = [
   { icon: Users, label: "Jugadores", view: "jugadores" },
   { icon: FileText, label: "Contrato", view: "contrato" },
   { icon: Vote, label: "Votación Capitán / Sub", view: "votacion" },
-  { icon: Star, label: "Figura / Casco", view: "figura-casco" },
   { icon: Calendar, label: "Fechas", view: "fechas" },
   { icon: Trophy, label: "Historial", view: "historial" },
 ];
